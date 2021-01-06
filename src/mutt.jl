@@ -3,10 +3,11 @@ module mutt
 
 greet() = println("Hello World!")
 
-export Party, AbstractParty, AssetType, Transaction
 println("Hello")
 module Data
 using UUIDs
+using SHA
+export Party, AbstractParty, AssetType, Transaction
 @enum PartyType begin
     currencyIssuer = 1
     currencyUser = 2
@@ -18,7 +19,7 @@ abstract type AbstractParty end
 
 abstract type AssetType end
 
-mutable struct Transaction{T<:AbstractParty}
+struct Transaction{T <: AbstractParty}
     id::UUID
     description::String
     amount::Int64
@@ -36,8 +37,20 @@ mutable struct Transaction{T<:AbstractParty}
         return x
     end
 end # Transaction
+mutable struct PartyState
+    _balance::Int64
+    _sha::Array{UInt8,1}
+    _transactions::Vector{Transaction}
+end
 
-mutable struct Party <: AbstractParty
+function addTransaction(p::PartyState, trans::Transaction)
+    ctx = SHA2_256_CTX()
+    update!(ctx, p._sha) 
+    update!(ctx, Vector{UInt8}(string(trans)))
+end
+
+
+struct Party <: AbstractParty
     id::UUID
     name::String
     transactions::Vector{Transaction}
@@ -55,6 +68,74 @@ mutable struct Party <: AbstractParty
 end # Party
 
 end
+
+module Runner
+using UUIDs
+using ..Data
+using Match
+
+"""
+A message that can be sent to a party's channel
+"""
+abstract type Message end
+struct EndListening <: Message
+end
+
+partyLock = Threads.Condition()
+parties = Dict{UUID,Tuple{Any,Channel{Message}}}()
+function _doRealRun(party, c::Channel{Message}) 
+    println("In do real run")
+    while true
+        msg = take!(c)
+        println("Got message ", msg)
+        @match msg begin
+            EndListening() => begin
+                lock(partyLock)
+                try
+                    delete!(parties, party.id)
+                    return
+                finally
+                    unlock(partyLock)
+                end
+            end
+            unknown => begin
+                println("Got unknown message", unknown)
+            end
+        end
+    end
+end
+
+function startTask(party)::Channel{Message}
+    lock(partyLock)
+    try
+        uuid = party.id
+        println("uuid is ", uuid)
+        println("parites ", parties)
+        got = get(parties, uuid, nothing)
+        println("Got: ", got)
+        if got === nothing begin 
+                
+                function runit(c::Channel{Message})
+                    println("Start runit")
+                    _doRealRun(party, c)
+                    println("End runnit")
+                end
+                chan = Channel{Message}(runit)
+                push!(parties, uuid => (party, chan))
+                println("Parties", parties)
+                return chan
+            end
+        else begin 
+                return got[2]
+            end
+        end        
+        finally
+       unlock(partyLock) 
+    end
+end
+
+end # Runner
+
 println("end")
 greet()
 end # module
