@@ -1,9 +1,15 @@
 [package]
-name = "mutt"
-version = "0.1.0"
 authors = ["David Pollak <feeder.of.the.bears@gmail.com>"]
 edition = "2018"
+name = "mutt"
+version = "0.1.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+arc-swap = "~1.2"
+async-channel = {version = "1.5.1", optional = true}
+async-std = "~1.8"
+im = {version = "~15", features = ["proptest", "serde"]}
+sha2 = "~0.9"
+uuid = {version = "~0.8", features = ["serde", "v4", "v5"]}
