@@ -1,5 +1,0 @@
-= Monetary Unifaction Theory Thingy
-
-An attempt by https://twitter.com/dpp[dpp] to unify
-a bunch of monetary theory.
-
