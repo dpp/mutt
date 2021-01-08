@@ -5,8 +5,7 @@ a bunch of monetary theory.
 
 
 
-<img src='https://g.gravizo.com/svg?
-digraph moof {
+<img src='https://g.gravizo.com/svg?digraph moof {
 rankdir="LR";
 fed_gvt [label = "Congress/Executive Branch"]
 state_gvt [label ="State Government"]
