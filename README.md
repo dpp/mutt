@@ -3,7 +3,7 @@
 An attempt by https://twitter.com/dpp[dpp] to unify
 a bunch of monetary theory.
 
-image:https://g.gravizo.com/svg?
+![Alt text](https://g.gravizo.com/svg?
   digraph G {
     aize ="4,4";
     main [shape=box];
@@ -18,5 +18,5 @@ image:https://g.gravizo.com/svg?
     make_string [label="make a string"];
     node [shape=box,style=filled,color=".7 .3 1.0"];
     execute -> compare;
-  }[Example]
-
+  }
+)
