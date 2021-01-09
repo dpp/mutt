@@ -27,7 +27,7 @@ extern crate serde_derive;
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 // use async_channel::{bounded, Receiver, Sender};
-use im::{vector, HashMap, HashSet, Vector};
+use im::{HashMap, HashSet, Vector};
 use serde_json::{json, to_string_pretty, Deserializer};
 use sha2::{Digest, Sha256};
 use std::io::{BufReader, Read};
@@ -336,12 +336,6 @@ async fn test_a_transaction() {
         let t2: &Transaction = t;
         println!("{}", to_string_pretty(&json!(t2)).unwrap());
     }
-
-    println!(
-        "World balance sheet {}",
-        to_string_pretty(&json!(w.generate_balance_sheet())).unwrap()
-    );
-    panic!()
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PartyType {
@@ -770,6 +764,8 @@ impl Misc {
     }
 
     pub fn append<T: Clone>(src: &Vector<T>, other: T) -> Vector<T> {
-        src + &vector!(other)
+        let mut sc = src.clone();
+        sc.push_back(other);
+        sc
     }
 }
