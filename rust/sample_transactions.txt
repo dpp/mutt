@@ -1,0 +1,32 @@
+{
+    "description": "Government buys Labor",
+    "from": {
+        "USD": "50"
+    },
+    "from_party": "13a08b9b-2a5f-5e09-90aa-b0dc31038e34",
+    "id": "58f9bbcf-7296-409a-bd28-c4f365e7e44a",
+    "to": {
+        "Labor": "2"
+    },
+    "to_party": "757de9b5-337b-5fe2-906c-143f26984912",
+    "when": {
+        "nanos_since_epoch": 643122775,
+        "secs_since_epoch": 1610151893
+    }
+}
+{
+    "description": "Labor buys food from Bank",
+    "from": {
+        "USD": "5"
+    },
+    "from_party": "757de9b5-337b-5fe2-906c-143f26984912",
+    "id": "1b8c528c-10b1-4f79-8cd4-2f74cd10ab40",
+    "to": {
+        "Food": "3"
+    },
+    "to_party": "e4266d2d-d6e2-527a-a2ab-67c384cea8b3",
+    "when": {
+        "nanos_since_epoch": 643453891,
+        "secs_since_epoch": 1610151893
+    }
+}

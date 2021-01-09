@@ -1,17 +1,11 @@
-digraph moof {
-rankdir="LR";
+digraph basic {
+//rankdir="LR";
 
-fed_gvt [label = "Congress/Executive Branch"]
+fed_gvt [shape = cylinder label = "Federal Government\nCurrency Issuer\nBalance $-2"];
 
-state_gvt [label ="State Government"]
+consumers [shape = cylinder ; label = "Consumers\nBalance $2"];
 
-treasury [label = "Treasury"]
+fed_gvt -> consumers [label = "Purchase:\n$10"];
 
-bond_holder [label = "Bond Holder"]
-
-person [label = "Dogmeat"]
-
-fed_gvt -> person [label = "Purchase Goods/Services"];
-
-person -> fed_gvt [label = "tax"];
+consumers -> fed_gvt [label = "Tax:\n$8"];
 }

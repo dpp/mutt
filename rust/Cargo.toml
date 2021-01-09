@@ -15,6 +15,9 @@ im = {version = "~15", features = ["proptest", "serde"]}
 lazy_static = "~1.4"
 rpds = {version = "~0.8"}
 rug = "~1.11"
+serde = {version = "~1.0", features = ["derive"]}
+serde_derive = "~1.0"
+serde_json = "~1.0"
 sha2 = "~0.9"
 tokio = {version = "1", features = ["full"]}
 uuid = {version = "~0.8", features = ["serde", "v4", "v5"]}

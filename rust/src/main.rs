@@ -1,11 +1,36 @@
+// MIT License
+
+// Copyright (c) 2021 David Pollak
+
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 #[macro_use]
 extern crate lazy_static;
+extern crate serde_derive;
 
 use arc_swap::ArcSwap;
+use serde::{Deserialize, Serialize};
 // use async_channel::{bounded, Receiver, Sender};
-use im::{HashMap, HashSet};
-use rpds::Vector;
+use im::{vector, HashMap, HashSet, Vector};
+use serde_json::{json, to_string_pretty, Deserializer};
 use sha2::{Digest, Sha256};
+use std::io::{BufReader, Read};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -23,13 +48,49 @@ fn test_numbers() {
 
 #[tokio::main]
 pub async fn main() {
-    println!("Hello, world!");
-    for x in 1..=10 {
-        tokio::spawn(async move {
-            println!("x is {}", x);
-        });
+    // println!("US Gov uuid {}", US_GOVERNMENT_UUID.to_string());
+    // println!("Labor uuid {}", LABOR_UUID.to_string());
+    // println!("Bank uuid {}", BANK_UUID.to_string());
+    // println!("Raw Materials uuid {}", RAW_MATERIALS_UUID.to_string());
+    // println!("Food uuid {}", FOOD_PRODUCER_UUID.to_string());
+
+    let w = Arc::new(World::new_with_preload(World::get_test_party_stuff()));
+    process_json_stream(BufReader::new(std::io::stdin()), &w)
+        .await
+        .unwrap();
+
+    let balance = w.generate_balance_sheet();
+    println!(
+        "Balance Sheet:\n{}",
+        to_string_pretty(&json!(balance)).unwrap()
+    );
+}
+
+pub async fn process_json_stream<R: Read>(
+    reader: BufReader<R>,
+    world: &Arc<World>,
+) -> Result<(), String> {
+    let stream = Deserializer::from_reader(reader).into_iter::<Transaction>();
+
+    let mut to_wait = Vec::new();
+    for v in stream {
+        let v = v.map_err(|se| format!("Serde Error {}", se))?;
+        println!(
+            "Processing Transaction:\n{}",
+            to_string_pretty(&json!(v)).unwrap()
+        );
+        let w2 = world.clone();
+        to_wait.push(tokio::spawn(async move {
+            w2.process_transaction(&Arc::new(v)).await.unwrap();
+        }));
     }
-    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // wait for completion
+    for v in to_wait {
+        v.await.unwrap();
+    }
+
+    Ok(())
 }
 
 pub const US_GOVERNMENT_NAME: &str = "US Government";
@@ -61,6 +122,24 @@ impl World {
         };
         ret.add_party(&Party::new_issuer(US_GOVERNMENT_NAME));
         ret
+    }
+
+    pub fn generate_balance_sheet(&self) -> Vec<(Uuid, String, Vec<AssetType>)> {
+        let snapshot = self.parties.load();
+        let mut v: Vec<(Uuid, String, Vec<AssetType>)> = snapshot
+            .values()
+            .map(|v| {
+                (
+                    v.id.clone(),
+                    v.name.clone(),
+                    v.state.load().assets.values().map(|a| a.clone()).collect(),
+                )
+            })
+            .collect();
+
+        v.sort_by(|a, b| a.1.cmp(&b.1));
+
+        v
     }
 
     pub fn new_with_preload(info: Vec<(&str, Vec<AssetType>)>) -> World {
@@ -115,11 +194,11 @@ impl World {
         match res {
             err @ Err(_) => {
                 self.failed_transactions
-                    .rcu(|t| t.push_back((err.clone(), xaction.clone())));
+                    .rcu(|t| Misc::append(t, (err.clone(), xaction.clone())));
                 err.clone()
             }
             _ => {
-                self.transactions.rcu(|t| t.push_back(xaction.clone()));
+                self.transactions.rcu(|t| Misc::append(t, xaction.clone()));
                 Ok(())
             }
         }
@@ -172,7 +251,7 @@ fn test_world_building() {
 async fn test_a_transaction() {
     let w = World::new_with_preload(World::get_test_party_stuff());
     let t = Arc::new(Transaction {
-        description: "Test".to_string(),
+        description: "Government buys Labor".to_string(),
         from_party: *US_GOVERNMENT_UUID,
         to_party: *LABOR_UUID,
         id: Uuid::new_v4(),
@@ -180,7 +259,6 @@ async fn test_a_transaction() {
         from: AssetType::USD(Fix::from(50)),
         to: AssetType::Labor(Fix::from(2)),
     });
-    println!("Early Labor is {:?}", w.party_for(&LABOR_UUID).unwrap());
     w.process_transaction(&t).await.unwrap();
     assert!(
         w.party_for(&LABOR_UUID).unwrap().get_cash_balance() > Fix::from(0),
@@ -201,9 +279,8 @@ async fn test_a_transaction() {
             AssetType::Labor(x) => x,
             _ => panic!("Expected labor"),
         } > Fix::from(0),
-        "Goverment has labor"
+        "Government has labor"
     );
-    println!("Labor is {:?}", w.party_for(&LABOR_UUID).unwrap());
     assert_eq!(
         match w
             .party_for(&LABOR_UUID)
@@ -218,7 +295,7 @@ async fn test_a_transaction() {
         "Labor sold some"
     );
     let t = Arc::new(Transaction {
-        description: "Test 2".to_string(),
+        description: "Labor buys food from Bank".to_string(),
         from_party: *LABOR_UUID,
         to_party: *BANK_UUID,
         id: Uuid::new_v4(),
@@ -226,6 +303,7 @@ async fn test_a_transaction() {
         from: AssetType::USD(Fix::from(5)),
         to: AssetType::Food(Fix::from(3)),
     });
+
     w.process_transaction(&t).await.unwrap();
     assert_eq!(
         match w
@@ -253,8 +331,19 @@ async fn test_a_transaction() {
         Fix::from(-3),
         "Bank sold food it didn't have"
     );
+
+    for t in w.transactions.load().iter() {
+        let t2: &Transaction = t;
+        println!("{}", to_string_pretty(&json!(t2)).unwrap());
+    }
+
+    println!(
+        "World balance sheet {}",
+        to_string_pretty(&json!(w.generate_balance_sheet())).unwrap()
+    );
+    panic!()
 }
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PartyType {
     CurrencyIssuer = 1,
     CurrencyUser = 2,
@@ -274,7 +363,7 @@ pub struct Loan {
     balance_usd: Fix,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AssetType {
     Labor(Fix),
     USD(Fix),
@@ -327,7 +416,7 @@ impl AssetType {
         }
     }
 }
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub enum AssetTypeIdentifer {
     Labor = 1,
     USD,
@@ -351,7 +440,7 @@ impl AssetTypeIdentifer {
 
 pub type ArcParty = Arc<Party>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Transaction {
     pub id: Uuid,
     pub description: String,
@@ -359,7 +448,36 @@ pub struct Transaction {
     pub to: AssetType,
     pub from_party: Uuid,
     pub to_party: Uuid,
+    #[serde(with = "approx_instant")]
     pub when: Instant,
+}
+
+// copied from https://github.com/serde-rs/serde/issues/1375
+mod approx_instant {
+    use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
+    use std::time::{Instant, SystemTime};
+
+    pub fn serialize<S>(instant: &Instant, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let system_now = SystemTime::now();
+        let instant_now = Instant::now();
+        let approx = system_now - (instant_now - *instant);
+        approx.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Instant, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let de = SystemTime::deserialize(deserializer)?;
+        let system_now = SystemTime::now();
+        let instant_now = Instant::now();
+        let duration = system_now.duration_since(de).map_err(Error::custom)?;
+        let approx = instant_now - duration;
+        Ok(approx)
+    }
 }
 
 pub type PartyAssets = HashMap<AssetTypeIdentifer, AssetType>;
@@ -441,12 +559,12 @@ impl PartyState {
             // remove the offending transaction
             for i in self.transactions.iter() {
                 if i.id != xa.id {
-                    v2 = v2.push_back(i.clone());
+                    v2.push_back(i.clone());
                 }
             }
             v2
         } else {
-            self.transactions.push_back(xa.clone())
+            Misc::append(&self.transactions, xa.clone())
         };
 
         let new_hash = if rollback {
@@ -649,5 +767,9 @@ impl Misc {
     /// Create a stable UUID given a string
     pub fn compute_uuid_for(string: &str) -> Uuid {
         Uuid::new_v5(&Uuid::NAMESPACE_DNS, string.as_bytes())
+    }
+
+    pub fn append<T: Clone>(src: &Vector<T>, other: T) -> Vector<T> {
+        src + &vector!(other)
     }
 }
