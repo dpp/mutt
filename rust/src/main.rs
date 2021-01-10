@@ -25,14 +25,13 @@ extern crate lazy_static;
 extern crate serde_derive;
 
 use arc_swap::ArcSwap;
-use serde::{Deserialize, Serialize};
-// use async_channel::{bounded, Receiver, Sender};
+use chrono::{DateTime, Duration, FixedOffset, Utc};
 use im::{HashMap, HashSet, Vector};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string_pretty, Deserializer};
 use sha2::{Digest, Sha256};
 use std::io::{BufReader, Read};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use fixed::{types::extra::U64, FixedI128};
@@ -81,7 +80,7 @@ pub async fn process_json_stream<R: Read>(
         );
         let w2 = world.clone();
         to_wait.push(tokio::spawn(async move {
-            w2.process_transaction(&Arc::new(v)).await.unwrap();
+            w2.process_transaction(&v).await.unwrap();
         }));
     }
 
@@ -170,7 +169,8 @@ impl World {
 
     /// Process a transaction. Given the async nature of stuff, there's
     /// no way to get a
-    pub async fn process_transaction(&self, xaction: &Arc<Transaction>) -> Result<(), String> {
+    pub async fn process_transaction(&self, xaction: &Transaction) -> Result<(), String> {
+        let xaction = &Arc::new(xaction.fix_date_and_id());
         async fn process_stuff(self1: &World, xa2: &Arc<Transaction>) -> Result<(), String> {
             let parties = self1.parties.load();
             let from_party = xa2.from_party;
@@ -245,20 +245,59 @@ fn test_world_building() {
         "Has a US_GOVERNMENT UUID"
     )
 }
+#[test]
+fn test_transaction_reading_from_json() {
+    println!("{}", Misc::now().to_rfc3339());
 
+    let xa = r#"{
+    "description": "Labor buys food from Bank",
+    "from": {
+        "USD": "5"
+    },
+    "from_party": "757de9b5-337b-5fe2-906c-143f26984912",
+    "id": "1b8c528c-10b1-4f79-8cd4-2f74cd10ab40",
+    "to": {
+        "Food": "3"
+    },
+    "to_party": "e4266d2d-d6e2-527a-a2ab-67c384cea8b3",
+    "when": "2021-01-10T19:04:34.994945272+00:00"
+}
+"#;
+    let t: Transaction = serde_json::from_str(xa).unwrap();
+
+    assert_eq!(t.from, AssetType::USD(Fix::from(5)), "Got $5");
+
+    let xa2 = r#"{
+    "description": "Labor buys food from Bank",
+    "from": {
+        "USD": "2"
+    },
+    "from_party": "757de9b5-337b-5fe2-906c-143f26984912",
+    "id": "1b8c528c-10b1-4f79-8cd4-2f74cd10ab40",
+    "to": {
+        "Food": "3"
+    },
+    "to_party": "e4266d2d-d6e2-527a-a2ab-67c384cea8b3"
+}
+"#;
+
+    let t2: Transaction = serde_json::from_str(xa2).unwrap();
+
+    assert_eq!(t2.from, AssetType::USD(Fix::from(2)), "Got $2");
+}
 //#[test]
 #[tokio::test]
 async fn test_a_transaction() {
     let w = World::new_with_preload(World::get_test_party_stuff());
-    let t = Arc::new(Transaction {
+    let t = Transaction {
         description: "Government buys Labor".to_string(),
         from_party: *US_GOVERNMENT_UUID,
         to_party: *LABOR_UUID,
-        id: Uuid::new_v4(),
-        when: std::time::Instant::now(),
+        id: None,
+        when: None,
         from: AssetType::USD(Fix::from(50)),
         to: AssetType::Labor(Fix::from(2)),
-    });
+    };
     w.process_transaction(&t).await.unwrap();
     assert!(
         w.party_for(&LABOR_UUID).unwrap().get_cash_balance() > Fix::from(0),
@@ -294,15 +333,15 @@ async fn test_a_transaction() {
         Fix::from(998),
         "Labor sold some"
     );
-    let t = Arc::new(Transaction {
+    let t = Transaction {
         description: "Labor buys food from Bank".to_string(),
         from_party: *LABOR_UUID,
         to_party: *BANK_UUID,
-        id: Uuid::new_v4(),
-        when: std::time::Instant::now(),
+        id: None,
+        when: None,
         from: AssetType::USD(Fix::from(5)),
         to: AssetType::Food(Fix::from(3)),
-    });
+    };
 
     w.process_transaction(&t).await.unwrap();
     assert_eq!(
@@ -351,9 +390,9 @@ pub struct Loan {
     to: Uuid,
     interest_per_period: Fix,
     periods: usize,
-    initial_date: Instant,
+    initial_date: DateTime<Utc>,
     period_duration: Duration,
-    last_serviced: Instant,
+    last_serviced: DateTime<Utc>,
     balance_usd: Fix,
 }
 
@@ -436,41 +475,83 @@ pub type ArcParty = Arc<Party>;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Transaction {
-    pub id: Uuid,
+    #[serde(default)]
+    pub id: Option<Uuid>,
     pub description: String,
     pub from: AssetType,
     pub to: AssetType,
     pub from_party: Uuid,
     pub to_party: Uuid,
-    #[serde(with = "approx_instant")]
-    pub when: Instant,
+    #[serde(with = "format_optional_dates")]
+    #[serde(default)]
+    pub when: Option<DateTime<FixedOffset>>,
 }
 
-// copied from https://github.com/serde-rs/serde/issues/1375
-mod approx_instant {
-    use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
-    use std::time::{Instant, SystemTime};
+impl Transaction {
+    /// If date and/or id is missing insert them
+    pub fn fix_date_and_id(&self) -> Transaction {
+        Transaction {
+            id: match self.id {
+                None => Some(Uuid::new_v4()),
+                s => s,
+            },
+            description: self.description.clone(),
+            from: self.from.clone(),
+            to: self.to.clone(),
+            from_party: self.from_party,
+            to_party: self.to_party,
+            when: match self.when {
+                None => Some(Misc::now()),
+                s => s,
+            },
+        }
+    }
+}
 
-    pub fn serialize<S>(instant: &Instant, serializer: S) -> Result<S::Ok, S::Error>
+// From https://serde.rs/custom-date-format.html
+mod format_optional_dates {
+    use chrono::{DateTime, FixedOffset};
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    // The signature of a serialize_with function must follow the pattern:
+    //
+    //    fn serialize<S>(&T, S) -> Result<S::Ok, S::Error>
+    //    where
+    //        S: Serializer
+    //
+    // although it may also be generic over the input types T.
+    pub fn serialize<S>(
+        date: &Option<DateTime<FixedOffset>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let system_now = SystemTime::now();
-        let instant_now = Instant::now();
-        let approx = system_now - (instant_now - *instant);
-        approx.serialize(serializer)
+        match date {
+            None => serializer.serialize_none(),
+            Some(dt) => serializer.serialize_str(&dt.to_rfc3339()),
+        }
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Instant, D::Error>
+    // The signature of a deserialize_with function must follow the pattern:
+    //
+    //    fn deserialize<'de, D>(D) -> Result<T, D::Error>
+    //    where
+    //        D: Deserializer<'de>
+    //
+    // although it may also be generic over the output types T.
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<DateTime<FixedOffset>>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let de = SystemTime::deserialize(deserializer)?;
-        let system_now = SystemTime::now();
-        let instant_now = Instant::now();
-        let duration = system_now.duration_since(de).map_err(Error::custom)?;
-        let approx = instant_now - duration;
-        Ok(approx)
+        match String::deserialize(deserializer) {
+            Err(_) => Ok(None),
+            Ok(s) => {
+                let ps: DateTime<FixedOffset> =
+                    DateTime::parse_from_rfc3339(&s).map_err(serde::de::Error::custom)?;
+                Ok(Some(ps))
+            }
+        }
     }
 }
 
@@ -752,7 +833,7 @@ impl PartialEq for Party {
 }
 
 /// This is a struct that cannot be created. It's mostly to
-/// create a namespace for miscelanious functions
+/// create a namespace for miscellaneous functions
 pub struct Misc {
     _cant_create_one: String,
 }
@@ -767,5 +848,9 @@ impl Misc {
         let mut sc = src.clone();
         sc.push_back(other);
         sc
+    }
+
+    pub fn now() -> DateTime<FixedOffset> {
+        DateTime::from(Utc::now())
     }
 }
