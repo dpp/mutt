@@ -20,29 +20,20 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#[macro_use]
-extern crate lazy_static;
-extern crate serde_derive;
-
-pub mod misc;
-pub mod party;
-pub mod transaction;
-pub mod world;
-
-use crate::transaction::Transaction;
-use crate::world::World;
+use mutt::transaction::Transaction;
+use mutt::world::World;
 use serde_json::{json, to_string_pretty, Deserializer};
 use std::io::{BufReader, Read};
 use std::sync::Arc;
 
 #[tokio::main]
 pub async fn main() {
-    let w = Arc::new(World::new_with_preload(World::get_test_party_stuff()));
+    let w = World::new_with_preload(World::get_test_party_stuff()).await;
     process_json_stream(BufReader::new(std::io::stdin()), &w)
         .await
         .unwrap();
 
-    let balance = w.generate_balance_sheet();
+    let balance = w.generate_balance_sheet().await;
     println!(
         "Balance Sheet:\n{}",
         to_string_pretty(&json!(balance)).unwrap()

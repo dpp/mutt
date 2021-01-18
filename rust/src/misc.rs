@@ -46,6 +46,10 @@ impl Misc {
     pub fn now() -> DateTime<FixedOffset> {
         DateTime::from(Utc::now())
     }
+    #[inline]
+    pub fn fe<A, B: std::fmt::Debug>(r: Result<A, B>) -> Result<A, String> {
+        r.map_err(|v| format!("{:?}", v))
+    }
 }
 
 #[test]

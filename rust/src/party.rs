@@ -22,14 +22,160 @@
 
 use crate::misc::{FixedNum, Misc};
 use crate::transaction::Transaction;
+use crate::world::World;
 
-use arc_swap::ArcSwap;
+use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use im::{HashMap, Vector};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
+use tokio::sync::mpsc::{channel as mpsc_channel, Receiver as MPSCReceiver, Sender as MPSCSender};
+use tokio::sync::oneshot::{channel as one_channel, Sender as OneShotSender};
 use uuid::Uuid;
+
+#[derive(Debug, Clone)]
+pub struct PartySnapshot {
+    pub id: Uuid,
+    pub name: String,
+    pub state: PartyState,
+}
+
+pub enum PartyMessage {
+    Snapshot(OneShotSender<PartySnapshot>),
+    Process {
+        xa: Arc<Transaction>,
+        mine: AssetType,
+        theirs: AssetType,
+        rollback: bool,
+        response_chan: OneShotSender<Result<(), String>>,
+    },
+}
+
+#[async_trait]
+pub trait Processor {
+    async fn get_state(&self) -> Result<PartyState, String> {
+        let (tx, rx) = one_channel();
+        self.get_channel()
+            .send(PartyMessage::Snapshot(tx))
+            .await
+            .map_err(|v| format!("{:?}", v))?;
+        rx.await.map(|v| v.state).map_err(|v| format!("{:?}", v))
+    }
+
+    async fn get_cash_balance(&self) -> Result<FixedNum, String> {
+        self.get_state().await.map(|v| v.cash_balance)
+    }
+
+    async fn get_asset(
+        &self,
+        asset_type: AssetTypeIdentifier,
+    ) -> Result<Option<AssetType>, String> {
+        self.get_state()
+            .await
+            .map(|v| v.assets.get(&asset_type).map(|v| v.clone()))
+    }
+    async fn process(
+        &self,
+        xa: &Arc<Transaction>,
+        mine: &AssetType,
+        theirs: &AssetType,
+    ) -> Result<(), String> {
+        let (tx, rx) = one_channel();
+        let msg = PartyMessage::Process {
+            xa: xa.clone(),
+            mine: mine.clone(),
+            theirs: theirs.clone(),
+            rollback: false,
+            response_chan: tx,
+        };
+        Misc::fe(self.get_channel().send(msg).await)?;
+
+        match Misc::fe(rx.await) {
+            Ok(msg) => msg,
+            Err(st) => Err(st),
+        }
+    }
+
+    fn get_channel(&self) -> MPSCSender<PartyMessage>;
+
+    async fn rollback(
+        &self,
+        xa: &Arc<Transaction>,
+        mine: &AssetType,
+        theirs: &AssetType,
+    ) -> Result<(), String> {
+        let (tx, rx) = one_channel();
+        let msg = PartyMessage::Process {
+            xa: xa.clone(),
+            mine: mine.clone(),
+            theirs: theirs.clone(),
+            rollback: true,
+            response_chan: tx,
+        };
+        Misc::fe(self.get_channel().send(msg).await)?;
+
+        let resp: Result<Result<(), String>, String> = Misc::fe(rx.await);
+        match resp {
+            Ok(msg) => msg,
+            Err(st) => Err(st),
+        }
+    }
+}
+#[derive(Debug, Clone)]
+pub struct PartyProxy {
+    pub id: Uuid,
+    pub channel: MPSCSender<PartyMessage>,
+}
+
+impl Processor for PartyProxy {
+    fn get_channel(&self) -> MPSCSender<PartyMessage> {
+        self.channel.clone()
+    }
+}
+
+impl PartyProxy {}
+impl core::fmt::Debug for PartyMessage {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            PartyMessage::Snapshot(_) => f.write_str("Snapshot()"),
+            PartyMessage::Process {
+                xa,
+                mine,
+                theirs,
+                rollback: rb,
+                response_chan: _,
+            } => f
+                .debug_struct("Process")
+                .field("xa", &xa)
+                .field("mine", &mine)
+                .field("theirs", &theirs)
+                .field("rollback", rb)
+                .finish(),
+        }
+    }
+}
+
+impl core::fmt::Display for PartyMessage {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            PartyMessage::Snapshot(_) => f.write_str("Snapshot"),
+            PartyMessage::Process {
+                xa,
+                mine,
+                theirs,
+                rollback: rb,
+                response_chan: _,
+            } => f
+                .debug_struct("Process")
+                .field("xa", &xa)
+                .field("mine", &mine)
+                .field("theirs", &theirs)
+                .field("rollback", rb)
+                .finish(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PartyType {
@@ -40,15 +186,15 @@ pub enum PartyType {
 }
 #[derive(Debug, Eq, PartialEq, Clone, Hash, Copy)]
 pub struct Loan {
-    amount_usd: FixedNum,
-    id: Uuid,
-    to: Uuid,
-    interest_per_period: FixedNum,
-    periods: usize,
-    initial_date: DateTime<Utc>,
-    period_duration: Duration,
-    last_serviced: DateTime<Utc>,
-    balance_usd: FixedNum,
+    pub amount_usd: FixedNum,
+    pub id: Uuid,
+    pub to: Uuid,
+    pub interest_per_period: FixedNum,
+    pub periods: usize,
+    pub initial_date: DateTime<Utc>,
+    pub period_duration: Duration,
+    pub last_serviced: DateTime<Utc>,
+    pub balance_usd: FixedNum,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,7 +293,7 @@ impl PartyState {
         }
     }
 
-    pub fn new_with_baseline(baseline: &Vec<AssetType>) -> ArcSwap<PartyState> {
+    pub fn new_with_baseline(baseline: &Vec<AssetType>) -> PartyState {
         let cash = baseline.iter().fold(FixedNum::from(0), |acc, v| match v {
             AssetType::USD(x) => acc + *x,
             _ => acc,
@@ -164,16 +310,12 @@ impl PartyState {
             }
         });
 
-        ArcSwap::new(Arc::new(PartyState {
+        PartyState {
             cash_balance: cash,
             hash: vec![],
             transactions: Vector::new(),
             assets: a,
-        }))
-    }
-
-    pub fn new_swap() -> ArcSwap<PartyState> {
-        ArcSwap::new(Arc::new(PartyState::new()))
+        }
     }
 
     pub fn process(
@@ -292,114 +434,132 @@ impl PartyState {
 pub struct Party {
     pub id: Uuid,
     pub name: String,
-    pub state: ArcSwap<PartyState>,
+    // pub state: ArcSwap<PartyState>,
+    channel: MPSCSender<PartyMessage>,
     pub party_type: PartyType,
 }
 
+impl Processor for Party {
+    fn get_channel(&self) -> MPSCSender<PartyMessage> {
+        self.channel.clone()
+    }
+}
+
 impl Party {
-    pub fn get_cash_balance(&self) -> FixedNum {
-        self.state.load().cash_balance
+    pub fn get_message_chan(&self) -> MPSCSender<PartyMessage> {
+        self.channel.clone()
     }
 
-    pub fn get_asset(&self, assert_type: AssetTypeIdentifier) -> Option<AssetType> {
-        self.state
-            .load()
-            .assets
-            .get(&assert_type)
-            .map(|v| v.clone())
+    fn create_channels() -> (MPSCSender<PartyMessage>, MPSCReceiver<PartyMessage>) {
+        mpsc_channel(100)
     }
 
-    pub async fn process(
-        &self,
-        xa: &Arc<Transaction>,
-        mine: &AssetType,
-        theirs: &AssetType,
-    ) -> Result<(), String> {
-        let mut error_option: Option<Result<(), String>> = None;
-        self.state.rcu(|st| match st.process(xa, mine, theirs) {
-            Ok(new) => new,
-            e => {
-                error_option = Some(match e {
-                    Ok(_) => Ok(()),
-                    Err(msg) => Err(msg),
-                });
-                let v: &PartyState = st;
-                v.clone()
+    async fn start_loop(
+        _world: Arc<World>,
+        myself: Arc<Party>,
+        initial_state: PartyState,
+        mut rx: MPSCReceiver<PartyMessage>,
+    ) {
+        let sc = myself.clone();
+        tokio::spawn(async move {
+            let sp: &Party = &sc;
+            let mut snapshot = initial_state;
+
+            fn log_error<T, V: std::fmt::Debug>(_result: Result<T, V>) {
+                // FIXME log error
+            }
+
+            let build_snapshot = |ss: &PartyState| PartySnapshot {
+                id: sp.id.clone(),
+                name: sp.name.clone(),
+                state: ss.clone(),
+            };
+
+            loop {
+                match rx.recv().await {
+                    None => break,
+                    Some(PartyMessage::Snapshot(reply)) => {
+                        log_error(reply.send(build_snapshot(&snapshot)));
+                    }
+                    Some(PartyMessage::Process {
+                        xa,
+                        mine,
+                        theirs,
+                        rollback,
+                        response_chan,
+                    }) => {
+                        match if rollback {
+                            snapshot.rollback(&xa, &mine, &theirs)
+                        } else {
+                            snapshot.process(&xa, &mine, &theirs)
+                        } {
+                            Ok(new) => {
+                                log_error(response_chan.send(Ok(())));
+                                snapshot = new.clone();
+                            }
+                            Err(e) => {
+                                log_error(response_chan.send(Err(e)));
+                            }
+                        }
+                    }
+                }
             }
         });
-        match error_option {
-            Some(r) => return r,
-            _ => (),
-        }
-        Ok(())
     }
-
-    pub async fn rollback(
-        &self,
-        xa: &Arc<Transaction>,
-        mine: &AssetType,
-        theirs: &AssetType,
-    ) -> Result<(), String> {
-        let mut error_option: Option<Result<(), String>> = None;
-        self.state.rcu(|st| match st.rollback(xa, mine, theirs) {
-            Ok(new) => new,
-            e => {
-                error_option = Some(match e {
-                    Ok(_) => Ok(()),
-                    Err(msg) => Err(msg),
-                });
-                let v: &PartyState = st;
-                v.clone()
-            }
-        });
-        match error_option {
-            Some(r) => return r,
-            _ => (),
-        }
-        Ok(())
-    }
-    pub fn new(name: &str, party_type: PartyType) -> Party {
-        Party {
+    pub async fn new(name: &str, party_type: PartyType, world: Arc<World>) -> Arc<Party> {
+        let (tx, rx) = Party::create_channels();
+        let ap = Arc::new(Party {
             id: Uuid::new_v4(),
             name: name.to_string(),
             party_type: party_type,
-            state: PartyState::new_swap(),
-        }
+            channel: tx,
+        });
+
+        Party::start_loop(world, ap.clone(), PartyState::new(), rx).await;
+
+        ap
     }
 
-    pub fn new_entity(name: &str, baseline: &Vec<AssetType>) -> Party {
-        Party {
+    pub async fn new_entity(
+        name: &str,
+        baseline: &Vec<AssetType>,
+        world: Arc<World>,
+    ) -> Arc<Party> {
+        let (tx, rx) = Party::create_channels();
+        let ap = Arc::new(Party {
             id: Misc::compute_uuid_for(name),
             name: name.to_string(),
             party_type: PartyType::CurrencyUser,
-            state: PartyState::new_with_baseline(baseline),
-        }
+            channel: tx,
+        });
+
+        Party::start_loop(
+            world,
+            ap.clone(),
+            PartyState::new_with_baseline(baseline),
+            rx,
+        )
+        .await;
+
+        ap
     }
-    pub fn new_issuer(name: &str) -> Party {
-        Party {
+    pub async fn new_issuer(name: &str, world: Arc<World>) -> Arc<Party> {
+        let (tx, rx) = Party::create_channels();
+        let ap = Arc::new(Party {
             id: Misc::compute_uuid_for(name),
             name: name.to_string(),
             party_type: PartyType::CurrencyIssuer,
-            state: PartyState::new_swap(),
-        }
+            channel: tx,
+        });
+
+        Party::start_loop(world, ap.clone(), PartyState::new(), rx).await;
+
+        ap
     }
 }
-impl Clone for Party {
-    fn clone(&self) -> Party {
-        Party {
-            id: self.id.clone(),
-            name: self.name.clone(),
-            party_type: self.party_type.clone(),
-            state: ArcSwap::new(self.state.load().clone()),
-        }
-    }
-}
+
 impl PartialEq for Party {
     fn eq(&self, other: &Party) -> bool {
-        self.id == other.id && self.name == other.name && self.party_type == other.party_type && {
-            let me: &PartyState = &self.state.load();
-            let them: &PartyState = &other.state.load();
-            me == them
-        }
+        self.id == other.id && self.name == other.name && self.party_type == other.party_type
     }
 }
