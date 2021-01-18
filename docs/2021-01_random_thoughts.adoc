@@ -1,0 +1,127 @@
+= Early Thoughts
+
+From a November 2020 https://twitter.com/dpp/status/1333104551050637313[Tweet Stream]:
+
+____
+
+Hey @interfluidity
+ I've been doing some thinking about money, employment, etc... I started with the assumption that if there's unemployment... if human labor is underutilized... then we can "afford" social programs because there's slack in the system... /1
+
+Then I started thinking... okay... how do we measure employment in a way that's similar to the current "full employment with low inflation" mandate for the Fed.
+
+Then I started thinking "what is 'low inflation'?" /2
+
+Which brought me to "stable wealth"... low inflation means that wealth is stable and predictable.
+
+Unfortunately, wealth has been slowly and gently moving to fewer and fewer people... so I'm not sure we want stable wealth... low inflation. /3
+
+So... "the government can run deficits in excess of GDP growth as long as there's unemployment" but we also want to ensure there's enough $s flowing to and from the lower economic deciles so we don't continue the flow toward gig serfdom. /4
+
+I started thinking about economic targets based on spend-per-decile. For example, the lowest income decile must spend at least 4% (just making the number up) of total. If we start with the measurement, the policy can follow (e.g., UBI). /5
+
+But this doesn't take into account adverse wealth shocks... inflation. We don't want to have measurements that drive policy that materially negatively impacts any group other than the 1%. The 1% has enough wealth to adapt to significant policy changes... /6
+
+This led me to think about not just spend targets per decile, but also wealth targets per decile. If policy is based on full employment intersected with per-decile spend targets intersected with per-decile wealth targets, we can craft interesting policy. /7
+
+The first thing that the tension between wealth and spend targets does for me is that it overcomes my objection to UBI. Why?
+
+My objection to UBI is that over time, folks with wealth will find ways to take percentages of UBI payments... effectively check cashing/food deserts /8
+
+But if the spend and wealth targets are both kept in mind, then there's a requirement to craft UBI such that wealth is increasingly retained in lower deciles which means protection against siphoning. /9
+
+Anyway... been thinking about this stuff during the last week... curious as to what parts of my thinking have been covered by others and any reactions/feedback you have.
+
+Thanks and Happy Holidays!
+____
+
+Then I had the idea that inflation was the gating factor for government spending (well, governments
+with a trusted sovereign currency.)
+
+We know what a https://en.wikipedia.org/wiki/Monetary_sovereignty[sovereign currency] is.
+
+But what's "`trusted`"? This means that a government can issue substantially all its debt
+in its own currency **and** the citizens can borrow in that currency as well. The US, Japan,
+and the UK governments borrow in Dollars, Yen, and Pounds. Consumers in each country take
+out loans, mortgages, etc. in Dollars, Yen, and Pounds.
+
+Thus, I was beginning to think... the reason for taxes is two-fold:
+
+* As a balance for the government issuing currency to buy services without causing inflation
+* As a tool for achieving social goals (e.g., tax rebats for buying electric vehicles)
+
+With that in mind, I got to the point where I believed that running deficits was not
+a bad thing as long as there was a reasonable level of inflation.
+
+During a late 2020 conversation with https://www.interfluidity.com/[Steve Waldman], he
+pointed me to https://en.wikipedia.org/wiki/Modern_Monetary_Theory[Modern Monetary Theory] (MMT).
+
+As of today (Jan 18, 2021), I've done some basic reading on MMT.
+
+The "`balance sheet`" approach that MMT takes is very appealing. So, I started writing
+some https://www.rust-lang.org/[Rust] code to simulate the operations of an economy.
+
+With the initial thought that everything was purely balance-sheet-based, the mechanics
+of MMT make sense.
+
+Further, MMT's explains a third reason for taxes: to create value in money by pricing government
+services (fire fighters, roads, police, schools, etc.) in the form of "`the government will give
+you currency, but then tax it back and that generally sets pricing for buy public and private goods.`"
+
+== Fairies beyond the Money Printing Fairy
+
+MMT posits that the government is the sole issuer of money and can create any quantity of money.
+
+At first reading, it seems that the government is the only entity that can create something
+out of nothing: it can print currency. The government is the Currency Fairy.
+
+But there are other Fairies.
+
+The Labor Fairy turns time into labor. Thus, labor is created out of nothing.
+
+And there is a Renewable Resource Fairy. Renewable resources like sunlight and wind
+are also things that are created out of nothing.
+
+Part of my exploration will be the impact of the tensions/markets among the various Fairies.
+
+== Time
+
+Both the Labor Fairy and the Renewable Fairy depends on time. Thus, time must be an integral
+part of any modeling. Labor and Renewables get balance added every "`tick`" of the clock.
+
+And Time has additional modeling value in the form of transaction velocity.
+
+The faster a transaction "`clears`" (the money is available to the receiving party),
+the more "`cash`" that flows through the economy.
+
+There's also an interesting thing to explore with a sufficiently rich simulator...
+is the "`Net Present Value`" of something like a college education aligned with the
+economic realities? Is the funding source of the college education material (e.g., is
+it better that we take student loans for college or that the government provides college
+like the government provides high school educations?)
+
+== Friction
+
+Time can introduce transactional friction in terms of settlement times.
+
+But there are other forms of transactional friction including: the cost of managing
+cash vs. electronic payments, regulatory hurdles, etc.
+
+Over time, modeling the whole cost of a transaction (and in the case of regulatory
+friction, the corresponding social value) both to those that engage in the transactions
+and the broader economy will, I believe, be interesting.
+
+== Fractional Reserves
+
+The basic premise of MMT is that every dollar that the government taxes out
+of the economy shrinks the economy by that dollar.
+
+On its face, this seems correct, but once one starts thinking about
+https://en.wikipedia.org/wiki/Fractional-reserve_banking[Fractional Reserve Banking],
+the picture becomes muddled.
+
+How much does each dollar that the government spends multiply based on fractional reserves?
+
+Is there a symmetric or asymmetric impact of government spending (currency injection) 
+vs. government taxing (currency destruction) in light of Fractional Reserves _and_
+transactional velocity?
+

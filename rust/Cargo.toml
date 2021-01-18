@@ -30,4 +30,3 @@ version = "0.13.1"
 
 [[bin]]
 name = "mutt"
-path = "bin/mutt.rs"
