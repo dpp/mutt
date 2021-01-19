@@ -27,6 +27,7 @@ use arc_swap::ArcSwap;
 use chrono::{DateTime, Utc};
 use im::{HashMap, HashSet};
 use std::sync::Arc;
+use tokio::sync::mpsc::channel as mpsc_channel;
 use uuid::Uuid;
 
 pub const US_GOVERNMENT_NAME: &str = "US Government";
@@ -68,7 +69,57 @@ impl World {
         ret.add_party(
             &Party::new_entity(MAGIC_LABOR_NAME, &vec![], PartyType::Fairy, ret.clone()).await,
         );
+
+        let wc = ret.clone();
+        tokio::spawn(async move {
+            World::run_loop(wc).await;
+        });
+
         ret
+    }
+
+    pub fn get_time(&self) -> DateTime<Utc> {
+        *(&self.time.load() as &DateTime<Utc>)
+    }
+
+    async fn run_loop(world: Arc<World>) {
+        loop {
+            use tokio::time::sleep;
+
+            use std::time::Duration;
+
+            // one week per second
+            sleep(Duration::from_millis(1000)).await;
+
+            let parties = world.parties.load();
+            let cnt = parties.len();
+            let next_time = *(&world.time.load() as &DateTime<Utc>) + chrono::Duration::days(7);
+            world.time.store(Arc::new(next_time));
+
+            let (tx, mut rx) = mpsc_channel(cnt);
+
+            tokio::spawn(async move {
+                // FIXME -- log the state info
+                let mut remaining = cnt;
+                while remaining > 0 {
+                    // receive all the states
+                    rx.recv().await; // FIXME do something with the snapshots
+                    remaining -= 1;
+                }
+            });
+
+            for p in parties.values() {
+                world.log_error(
+                    p.channel
+                        .send(PartyMessage::Tick(next_time, tx.clone()))
+                        .await,
+                );
+            }
+        }
+    }
+
+    pub fn log_error<A, B>(&self, _r: Result<A, B>) {
+        // FIXME log the error
     }
 
     pub fn get_transactions(&self) -> Arc<HashMap<Uuid, Arc<Transaction>>> {

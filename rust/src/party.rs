@@ -39,6 +39,7 @@ pub struct PartySnapshot {
     pub id: Uuid,
     pub name: String,
     pub state: PartyState,
+    pub now: DateTime<Utc>,
 }
 
 pub enum PartyMessage {
@@ -50,6 +51,7 @@ pub enum PartyMessage {
         rollback: bool,
         response_chan: OneShotSender<Result<(), String>>,
     },
+    Tick(DateTime<Utc>, MPSCSender<PartySnapshot>),
 }
 
 #[async_trait]
@@ -152,6 +154,7 @@ impl core::fmt::Debug for PartyMessage {
                 .field("theirs", &theirs)
                 .field("rollback", rb)
                 .finish(),
+            PartyMessage::Tick(when, _) => f.debug_struct("Tick").field("when", when).finish(),
         }
     }
 }
@@ -173,6 +176,7 @@ impl core::fmt::Display for PartyMessage {
                 .field("theirs", &theirs)
                 .field("rollback", rb)
                 .finish(),
+            PartyMessage::Tick(when, _) => f.debug_struct("Tick").field("when", when).finish(),
         }
     }
 }
@@ -457,7 +461,7 @@ impl Party {
     }
 
     async fn start_loop(
-        _world: Arc<World>,
+        world: Arc<World>,
         myself: Arc<Party>,
         initial_state: PartyState,
         mut rx: MPSCReceiver<PartyMessage>,
@@ -466,22 +470,28 @@ impl Party {
         tokio::spawn(async move {
             let sp: &Party = &sc;
             let mut snapshot = initial_state;
+            let mut real_now = world.get_time();
 
             fn log_error<T, V: std::fmt::Debug>(_result: Result<T, V>) {
                 // FIXME log error
             }
 
-            let build_snapshot = |ss: &PartyState| PartySnapshot {
+            let build_snapshot = |ss: &PartyState, the_now| PartySnapshot {
                 id: sp.id.clone(),
                 name: sp.name.clone(),
                 state: ss.clone(),
+                now: the_now,
             };
 
             loop {
                 match rx.recv().await {
                     None => break,
                     Some(PartyMessage::Snapshot(reply)) => {
-                        log_error(reply.send(build_snapshot(&snapshot)));
+                        log_error(reply.send(build_snapshot(&snapshot, real_now)));
+                    }
+                    Some(PartyMessage::Tick(now, tx)) => {
+                        real_now = now;
+                        log_error(tx.send(build_snapshot(&snapshot, real_now)).await);
                     }
                     Some(PartyMessage::Process {
                         xa,
