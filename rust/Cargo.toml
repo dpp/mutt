@@ -24,6 +24,10 @@ sha2 = "~0.9"
 tokio = {version = "1", features = ["full"]}
 uuid = {version = "~0.8", features = ["serde", "v4", "v5"]}
 
+[dependencies.clap]
+features = ["suggestions", "color"]
+version = "~2.33"
+
 [dependencies.pyo3]
 features = ["auto-initialize"]
 version = "0.13.1"

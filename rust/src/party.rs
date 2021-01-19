@@ -183,6 +183,8 @@ pub enum PartyType {
     CurrencyUser = 2,
     ForeignCurrencyIssuer = 3,
     ForeignCurrencyUser = 4,
+    Fairy = 5,
+    Labor = 6,
 }
 #[derive(Debug, Eq, PartialEq, Clone, Hash, Copy)]
 pub struct Loan {
@@ -523,13 +525,14 @@ impl Party {
     pub async fn new_entity(
         name: &str,
         baseline: &Vec<AssetType>,
+        the_type: PartyType,
         world: Arc<World>,
     ) -> Arc<Party> {
         let (tx, rx) = Party::create_channels();
         let ap = Arc::new(Party {
             id: Misc::compute_uuid_for(name),
             name: name.to_string(),
-            party_type: PartyType::CurrencyUser,
+            party_type: the_type,
             channel: tx,
         });
 

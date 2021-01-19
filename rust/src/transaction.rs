@@ -20,9 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::misc::Misc;
 use crate::party::AssetType;
-use chrono::{DateTime, FixedOffset};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -37,12 +36,12 @@ pub struct Transaction {
     pub to_party: Uuid,
     #[serde(with = "format_optional_dates")]
     #[serde(default)]
-    pub when: Option<DateTime<FixedOffset>>,
+    pub when: Option<DateTime<Utc>>,
 }
 
 impl Transaction {
     /// If date and/or id is missing insert them
-    pub fn fix_date_and_id(&self) -> Transaction {
+    pub fn fix_date_and_id(&self, now: &DateTime<Utc>) -> Transaction {
         Transaction {
             id: match self.id {
                 None => Some(Uuid::new_v4()),
@@ -54,7 +53,7 @@ impl Transaction {
             from_party: self.from_party,
             to_party: self.to_party,
             when: match self.when {
-                None => Some(Misc::now()),
+                None => Some(*now),
                 s => s,
             },
         }
@@ -63,7 +62,7 @@ impl Transaction {
 
 // From https://serde.rs/custom-date-format.html
 mod format_optional_dates {
-    use chrono::{DateTime, FixedOffset};
+    use chrono::{DateTime, FixedOffset, Utc};
     use serde::{self, Deserialize, Deserializer, Serializer};
 
     // The signature of a serialize_with function must follow the pattern:
@@ -73,10 +72,7 @@ mod format_optional_dates {
     //        S: Serializer
     //
     // although it may also be generic over the input types T.
-    pub fn serialize<S>(
-        date: &Option<DateTime<FixedOffset>>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(date: &Option<DateTime<Utc>>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -93,7 +89,7 @@ mod format_optional_dates {
     //        D: Deserializer<'de>
     //
     // although it may also be generic over the output types T.
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<DateTime<FixedOffset>>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<DateTime<Utc>>, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -102,7 +98,7 @@ mod format_optional_dates {
             Ok(s) => {
                 let ps: DateTime<FixedOffset> =
                     DateTime::parse_from_rfc3339(&s).map_err(serde::de::Error::custom)?;
-                Ok(Some(ps))
+                Ok(Some(ps.with_timezone(&Utc)))
             }
         }
     }

@@ -20,19 +20,20 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use mutt::misc::{FixedNum, Misc};
-use mutt::party::{AssetType, Processor};
+use mutt::misc::FixedNum;
+use mutt::party::{AssetType, PartyType, Processor};
 use mutt::transaction::Transaction;
 use mutt::world::*;
+use serde_json::{json, to_string_pretty};
 
 #[tokio::test]
 async fn test_world_building() {
-    let w = World::new().await;
+    let w = World::new(None).await;
     let ids = w.get_uuids();
     assert!(ids.len() > 0, "At least someone in the world");
 
     // construct a second world
-    let w2 = World::new().await;
+    let w2 = World::new(None).await;
     let ids2 = w2.get_uuids();
     assert_eq!(ids, ids2, "The ids must be stable");
 
@@ -42,9 +43,51 @@ async fn test_world_building() {
     )
 }
 #[test]
-fn test_transaction_reading_from_json() {
-    println!("{}", Misc::now().to_rfc3339());
+fn test_preload_json() {
+    let foo = World::get_test_party_stuff();
+    println!("{}", to_string_pretty(&json!(foo)).unwrap());
 
+    let st = r#"[
+  [
+    "Labor",
+    "Labor",
+    [
+      {
+        "Labor": "1000"
+      }
+    ]
+  ],
+  [
+    "Bank",
+    "CurrencyUser",
+    []
+  ],
+  [
+    "Raw Material",
+    "CurrencyUser",
+    [
+      {
+        "Materials": "10000"
+      }
+    ]
+  ],
+  [
+    "Food Producer",
+    "CurrencyUser",
+    [
+      {
+        "Food": "25000"
+      }
+    ]
+  ]
+]
+   "#;
+
+    let info: Vec<(String, PartyType, Vec<AssetType>)> = serde_json::from_str(st).unwrap();
+    assert_eq!(info, foo);
+}
+#[test]
+fn test_transaction_reading_from_json() {
     let xa = r#"{
     "description": "Labor buys food from Bank",
     "from": {
@@ -87,7 +130,7 @@ async fn test_a_transaction() {
     use mutt::party::AssetTypeIdentifier;
     use serde_json::{json, to_string_pretty};
 
-    let w = World::new_with_preload(World::get_test_party_stuff()).await;
+    let w = World::new_with_preload(None, World::get_test_party_stuff()).await;
     let t = Transaction {
         description: "Government buys Labor".to_string(),
         from_party: *US_GOVERNMENT_UUID,

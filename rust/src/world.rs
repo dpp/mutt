@@ -21,9 +21,10 @@
 // SOFTWARE.
 
 use crate::misc::{FixedNum, Misc};
-use crate::party::{AssetType, Party, PartyMessage, PartyProxy};
+use crate::party::{AssetType, Party, PartyMessage, PartyProxy, PartyType};
 use crate::transaction::Transaction;
 use arc_swap::ArcSwap;
+use chrono::{DateTime, Utc};
 use im::{HashMap, HashSet};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -53,15 +54,20 @@ pub struct World {
     parties: ArcSwap<HashMap<Uuid, PartyProxy>>,
     transactions: ArcSwap<HashMap<Uuid, Arc<Transaction>>>,
     failed_transactions: ArcSwap<HashMap<Uuid, (Result<(), String>, Arc<Transaction>)>>,
+    time: ArcSwap<DateTime<Utc>>,
 }
 impl World {
-    pub async fn new() -> Arc<World> {
+    pub async fn new(start: Option<DateTime<Utc>>) -> Arc<World> {
         let ret = Arc::new(World {
             parties: ArcSwap::new(Arc::new(HashMap::new())),
             transactions: ArcSwap::new(Arc::new(HashMap::new())),
             failed_transactions: ArcSwap::new(Arc::new(HashMap::new())),
+            time: ArcSwap::new(Arc::new(start.unwrap_or(Utc::now()))),
         });
         ret.add_party(&Party::new_issuer(US_GOVERNMENT_NAME, ret.clone()).await);
+        ret.add_party(
+            &Party::new_entity(MAGIC_LABOR_NAME, &vec![], PartyType::Fairy, ret.clone()).await,
+        );
         ret
     }
 
@@ -95,26 +101,35 @@ impl World {
         Ok(v)
     }
 
-    pub async fn new_with_preload(info: Vec<(&str, Vec<AssetType>)>) -> Arc<World> {
-        let ret = World::new().await;
-        for (name, preload) in info {
-            ret.add_party(&Party::new_entity(name, &preload, ret.clone()).await);
+    pub async fn new_with_preload(
+        start: Option<DateTime<Utc>>,
+        info: Vec<(String, PartyType, Vec<AssetType>)>,
+    ) -> Arc<World> {
+        let ret = World::new(start).await;
+        for (name, the_type, preload) in info {
+            ret.add_party(&Party::new_entity(&name, &preload, the_type, ret.clone()).await);
         }
         ret
     }
 
-    pub fn get_test_party_stuff() -> Vec<(&'static str, Vec<AssetType>)> {
+    pub fn get_test_party_stuff() -> Vec<(String, PartyType, Vec<AssetType>)> {
         let mut ret = Vec::new();
 
-        ret.push((LABOR_NAME, vec![AssetType::Labor(FixedNum::from(1000))]));
-
-        ret.push((BANK_NAME, vec![]));
         ret.push((
-            RAW_MATERIALS_NAME,
+            LABOR_NAME.to_string(),
+            PartyType::Labor,
+            vec![AssetType::Labor(FixedNum::from(1000))],
+        ));
+
+        ret.push((BANK_NAME.to_string(), PartyType::CurrencyUser, vec![]));
+        ret.push((
+            RAW_MATERIALS_NAME.to_string(),
+            PartyType::CurrencyUser,
             vec![AssetType::Materials(FixedNum::from(10000))],
         ));
         ret.push((
-            FOOD_PRODUCER_NAME,
+            FOOD_PRODUCER_NAME.to_string(),
+            PartyType::CurrencyUser,
             vec![AssetType::Food(FixedNum::from(25000))],
         ));
         ret
@@ -125,7 +140,7 @@ impl World {
     pub async fn process_transaction(&self, xaction: &Transaction) -> Result<(), String> {
         use crate::party::Processor;
 
-        let xaction = &Arc::new(xaction.fix_date_and_id());
+        let xaction = &Arc::new(xaction.fix_date_and_id(&self.time.load()));
         async fn process_stuff(self1: &World, xa2: &Arc<Transaction>) -> Result<(), String> {
             let parties = self1.parties.load();
             let from_party = xa2.from_party;

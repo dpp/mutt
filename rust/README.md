@@ -39,5 +39,44 @@ Food
 Materials
 ```
 
-To run a sample simulator: `cargo run < sample_transactions.txt` and you should
+To run a sample simulator: `cargo run -- --extra-defaults --event-source '^^' < sample_transactions.txt` and you should
 see a balance sheet emitted.
+
+And the `Party`s at setup can be specified as JSON:
+
+```json
+[
+  [
+    "Labor",
+    "Labor",
+    [
+      {
+        "Labor": "1000"
+      }
+    ]
+  ],
+  [
+    "Bank",
+    "CurrencyUser",
+    []
+  ],
+  [
+    "Raw Material",
+    "CurrencyUser",
+    [
+      {
+        "Materials": "10000"
+      }
+    ]
+  ],
+  [
+    "Food Producer",
+    "CurrencyUser",
+    [
+      {
+        "Food": "25000"
+      }
+    ]
+  ]
+]
+```
