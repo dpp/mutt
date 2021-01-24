@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::misc::{FixedNum, Misc};
+use crate::misc::{le, FixedNum, Misc};
 use crate::transaction::Transaction;
 use crate::world::World;
 
@@ -472,10 +472,6 @@ impl Party {
             let mut snapshot = initial_state;
             let mut real_now = world.get_time();
 
-            fn log_error<T, V: std::fmt::Debug>(_result: Result<T, V>) {
-                // FIXME log error
-            }
-
             let build_snapshot = |ss: &PartyState, the_now| PartySnapshot {
                 id: sp.id.clone(),
                 name: sp.name.clone(),
@@ -487,11 +483,12 @@ impl Party {
                 match rx.recv().await {
                     None => break,
                     Some(PartyMessage::Snapshot(reply)) => {
-                        log_error(reply.send(build_snapshot(&snapshot, real_now)));
+                        le(reply.send(build_snapshot(&snapshot, real_now)));
                     }
                     Some(PartyMessage::Tick(now, tx)) => {
                         real_now = now;
-                        log_error(tx.send(build_snapshot(&snapshot, real_now)).await);
+                        le(tx.send(build_snapshot(&snapshot, real_now)).await);
+                        // FIXME -- perform periodic events
                     }
                     Some(PartyMessage::Process {
                         xa,
@@ -506,11 +503,11 @@ impl Party {
                             snapshot.process(&xa, &mine, &theirs)
                         } {
                             Ok(new) => {
-                                log_error(response_chan.send(Ok(())));
+                                le(response_chan.send(Ok(())));
                                 snapshot = new.clone();
                             }
                             Err(e) => {
-                                log_error(response_chan.send(Err(e)));
+                                le(response_chan.send(Err(e)));
                             }
                         }
                     }

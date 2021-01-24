@@ -23,6 +23,7 @@
 use chrono::{DateTime, FixedOffset, Utc};
 use fixed::{types::extra::U64, FixedI128};
 use im::Vector;
+use log::error;
 use uuid::Uuid;
 
 pub struct Misc {
@@ -49,6 +50,21 @@ impl Misc {
     #[inline]
     pub fn fe<A, B: std::fmt::Debug>(r: Result<A, B>) -> Result<A, String> {
         r.map_err(|v| format!("{:?}", v))
+    }
+}
+
+/// Log Error
+///
+/// If the parameter is an error, log it and return `None`,
+/// otherwise return `Some`
+#[inline]
+pub fn le<A, B: std::fmt::Debug>(r: Result<A, B>) -> Option<A> {
+    match r {
+        Ok(v) => Some(v),
+        Err(e) => {
+            error!("{:?}", e);
+            None
+        }
     }
 }
 

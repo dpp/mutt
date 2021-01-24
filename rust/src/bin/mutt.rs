@@ -22,14 +22,24 @@
 
 use chrono::{DateTime, Utc};
 use clap::{App, Arg};
+use log::info;
 use mutt::party::{AssetType, PartyType};
 use mutt::transaction::Transaction;
 use mutt::world::World;
 use serde_json::{json, to_string_pretty, Deserializer};
+use simplelog::*;
 use std::io::{BufRead, BufReader, Read};
 use std::sync::Arc;
+
 #[tokio::main]
 pub async fn main() {
+    CombinedLogger::init(vec![TermLogger::new(
+        LevelFilter::Info,
+        Config::default(),
+        TerminalMode::Mixed,
+    )])
+    .unwrap();
+
     let input_name = "Input Name";
     let extra_defaults = "Extra Defaults";
     let defaults_file = "Defaults File";
@@ -67,7 +77,7 @@ pub async fn main() {
                 .validator(validate_file),
         )
         .get_matches();
-
+    info!("Starting... with config {:?}", matches);
     let mut defaults = read_defaults(matches.value_of(defaults_file)).clone();
 
     if matches.is_present(extra_defaults) {

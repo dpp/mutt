@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::misc::{FixedNum, Misc};
+use crate::misc::{le, FixedNum, Misc};
 use crate::party::{AssetType, Party, PartyMessage, PartyProxy, PartyType};
 use crate::transaction::Transaction;
 use arc_swap::ArcSwap;
@@ -109,17 +109,11 @@ impl World {
             });
 
             for p in parties.values() {
-                world.log_error(
-                    p.channel
-                        .send(PartyMessage::Tick(next_time, tx.clone()))
-                        .await,
-                );
+                le(p.channel
+                    .send(PartyMessage::Tick(next_time, tx.clone()))
+                    .await);
             }
         }
-    }
-
-    pub fn log_error<A, B>(&self, _r: Result<A, B>) {
-        // FIXME log the error
     }
 
     pub fn get_transactions(&self) -> Arc<HashMap<Uuid, Arc<Transaction>>> {

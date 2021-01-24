@@ -26,7 +26,7 @@ use mutt::transaction::Transaction;
 use mutt::world::*;
 use serde_json::{json, to_string_pretty};
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_world_building() {
     let w = World::new(None).await;
     let ids = w.get_uuids();
@@ -124,8 +124,7 @@ fn test_transaction_reading_from_json() {
 
     assert_eq!(t2.from, AssetType::USD(FixedNum::from(2)), "Got $2");
 }
-//#[test]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_a_transaction() {
     use mutt::party::AssetTypeIdentifier;
     use serde_json::{json, to_string_pretty};
