@@ -26,7 +26,9 @@ use crate::world::World;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
+use derivative::Derivative;
 use im::{HashMap, Vector};
+use rlua::Lua;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -34,7 +36,7 @@ use tokio::sync::mpsc::{channel as mpsc_channel, Receiver as MPSCReceiver, Sende
 use tokio::sync::oneshot::{channel as one_channel, Sender as OneShotSender};
 use uuid::Uuid;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PartySnapshot {
     pub id: Uuid,
     pub name: String,
@@ -281,7 +283,7 @@ impl AssetTypeIdentifier {
 pub type ArcParty = Arc<Party>;
 pub type PartyAssets = HashMap<AssetTypeIdentifier, AssetType>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PartyState {
     pub cash_balance: FixedNum,
     pub hash: Vec<u8>,
@@ -436,7 +438,8 @@ impl PartyState {
     }
 }
 
-#[derive(Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct Party {
     pub id: Uuid,
     pub name: String,
@@ -463,6 +466,7 @@ impl Party {
     async fn start_loop(
         world: Arc<World>,
         myself: Arc<Party>,
+        _lua: Arc<Lua>,
         initial_state: PartyState,
         mut rx: MPSCReceiver<PartyMessage>,
     ) {
@@ -515,6 +519,17 @@ impl Party {
             }
         });
     }
+
+    pub fn create_lua_runtime() -> Arc<Lua> {
+        let lua = Lua::new();
+        let z: rlua::Result<()> = lua.context(|ctx| {
+            ctx.load(r#"dofile("runtime_scripts/base.lua")"#).eval()?;
+            ctx.load("we_own_your_basez()").eval()?;
+            Ok(())
+        });
+        le(z);
+        Arc::new(lua)
+    }
     pub async fn new(name: &str, party_type: PartyType, world: Arc<World>) -> Arc<Party> {
         let (tx, rx) = Party::create_channels();
         let ap = Arc::new(Party {
@@ -524,7 +539,8 @@ impl Party {
             channel: tx,
         });
 
-        Party::start_loop(world, ap.clone(), PartyState::new(), rx).await;
+        let arc_lua = Party::create_lua_runtime();
+        Party::start_loop(world, ap.clone(), arc_lua, PartyState::new(), rx).await;
 
         ap
     }
@@ -546,6 +562,7 @@ impl Party {
         Party::start_loop(
             world,
             ap.clone(),
+            Party::create_lua_runtime(),
             PartyState::new_with_baseline(baseline),
             rx,
         )
@@ -562,7 +579,14 @@ impl Party {
             channel: tx,
         });
 
-        Party::start_loop(world, ap.clone(), PartyState::new(), rx).await;
+        Party::start_loop(
+            world,
+            ap.clone(),
+            Party::create_lua_runtime(),
+            PartyState::new(),
+            rx,
+        )
+        .await;
 
         ap
     }
