@@ -20,7 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::misc::{le, FixedNum, Misc};
+use crate::log_error;
+use crate::misc::{MResult, Misc};
 use crate::party::{AssetType, Party, PartyMessage, PartyProxy, PartyType};
 use crate::transaction::Transaction;
 use arc_swap::ArcSwap;
@@ -54,20 +55,20 @@ fn uuids_are_stable() {
 pub struct World {
     parties: ArcSwap<HashMap<Uuid, PartyProxy>>,
     transactions: ArcSwap<HashMap<Uuid, Arc<Transaction>>>,
-    failed_transactions: ArcSwap<HashMap<Uuid, (Result<(), String>, Arc<Transaction>)>>,
+    failed_transactions: ArcSwap<HashMap<Uuid, (Arc<MResult<()>>, Arc<Transaction>)>>,
     time: ArcSwap<DateTime<Utc>>,
 }
 impl World {
-    pub async fn new(start: Option<DateTime<Utc>>) -> Arc<World> {
+    pub async fn new(start: Option<DateTime<Utc>>) -> MResult<Arc<World>> {
         let ret = Arc::new(World {
             parties: ArcSwap::new(Arc::new(HashMap::new())),
             transactions: ArcSwap::new(Arc::new(HashMap::new())),
             failed_transactions: ArcSwap::new(Arc::new(HashMap::new())),
             time: ArcSwap::new(Arc::new(start.unwrap_or(Utc::now()))),
         });
-        ret.add_party(&Party::new_issuer(US_GOVERNMENT_NAME, ret.clone()).await);
+        ret.add_party(&Party::new_issuer(US_GOVERNMENT_NAME, ret.clone()).await?);
         ret.add_party(
-            &Party::new_entity(MAGIC_LABOR_NAME, &vec![], PartyType::Fairy, ret.clone()).await,
+            &Party::new_entity(MAGIC_LABOR_NAME, &vec![], PartyType::Fairy, ret.clone()).await?,
         );
 
         let wc = ret.clone();
@@ -75,7 +76,7 @@ impl World {
             World::run_loop(wc).await;
         });
 
-        ret
+        Ok(ret)
     }
 
     pub fn get_time(&self) -> DateTime<Utc> {
@@ -103,15 +104,17 @@ impl World {
                 let mut remaining = cnt;
                 while remaining > 0 {
                     // receive all the states
-                    rx.recv().await; // FIXME do something with the snapshots
+                    rx.recv().await; // FIXME do something with the s/napshots
                     remaining -= 1;
                 }
             });
 
             for p in parties.values() {
-                le(p.channel
-                    .send(PartyMessage::Tick(next_time, tx.clone()))
-                    .await);
+                log_error!(
+                    p.channel
+                        .send(PartyMessage::Tick(next_time, tx.clone()))
+                        .await
+                );
             }
         }
     }
@@ -149,12 +152,12 @@ impl World {
     pub async fn new_with_preload(
         start: Option<DateTime<Utc>>,
         info: Vec<(String, PartyType, Vec<AssetType>)>,
-    ) -> Arc<World> {
-        let ret = World::new(start).await;
+    ) -> MResult<Arc<World>> {
+        let ret = World::new(start).await?;
         for (name, the_type, preload) in info {
-            ret.add_party(&Party::new_entity(&name, &preload, the_type, ret.clone()).await);
+            ret.add_party(&Party::new_entity(&name, &preload, the_type, ret.clone()).await?);
         }
-        ret
+        Ok(ret)
     }
 
     pub fn get_test_party_stuff() -> Vec<(String, PartyType, Vec<AssetType>)> {
@@ -163,30 +166,30 @@ impl World {
         ret.push((
             LABOR_NAME.to_string(),
             PartyType::Labor,
-            vec![AssetType::Labor(FixedNum::from(1000))],
+            vec![AssetType::labor(1000)],
         ));
 
         ret.push((BANK_NAME.to_string(), PartyType::CurrencyUser, vec![]));
         ret.push((
             RAW_MATERIALS_NAME.to_string(),
             PartyType::CurrencyUser,
-            vec![AssetType::Materials(FixedNum::from(10000))],
+            vec![AssetType::materials(10000)],
         ));
         ret.push((
             FOOD_PRODUCER_NAME.to_string(),
             PartyType::CurrencyUser,
-            vec![AssetType::Food(FixedNum::from(25000))],
+            vec![AssetType::food(25000)],
         ));
         ret
     }
 
     /// Process a transaction. Given the async nature of stuff, there's
     /// no way to get a
-    pub async fn process_transaction(&self, xaction: &Transaction) -> Result<(), String> {
+    pub async fn process_transaction(&self, xaction: &Transaction) -> Arc<MResult<()>> {
         use crate::party::Processor;
 
         let xaction = &Arc::new(xaction.fix_date_and_id(&self.time.load()));
-        async fn process_stuff(self1: &World, xa2: &Arc<Transaction>) -> Result<(), String> {
+        async fn process_stuff(self1: &World, xa2: &Arc<Transaction>) -> MResult<()> {
             let parties = self1.parties.load();
             let from_party = xa2.from_party;
             let to_party = xa2.to_party;
@@ -201,20 +204,21 @@ impl World {
                 Ok(_) => Ok(()),
                 e @ Err(_) => {
                     from.rollback(xa2, &xa2.to, &xa2.from).await?;
-                    e.clone()
+                    e // .clone()
                 }
             }
         }
         let res = process_stuff(self, xaction).await;
         match res {
             err @ Err(_) => {
+                let e2 = Arc::new(err);
                 self.failed_transactions.rcu(|t| {
                     t.update(
                         xaction.id.unwrap_or_else(|| Uuid::new_v4()),
-                        (err.clone(), xaction.clone()),
+                        (e2.clone(), xaction.clone()),
                     )
                 });
-                err.clone()
+                e2
             }
             _ => {
                 self.transactions.rcu(|t| {
@@ -223,7 +227,7 @@ impl World {
                         xaction.clone(),
                     )
                 });
-                Ok(())
+                Arc::new(Ok(()))
             }
         }
     }

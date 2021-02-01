@@ -20,7 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::misc::{le, FixedNum, Misc};
+use crate::log_error;
+use crate::misc::{FixedNum, MResult, Misc};
 use crate::transaction::Transaction;
 use crate::world::World;
 
@@ -51,30 +52,24 @@ pub enum PartyMessage {
         mine: AssetType,
         theirs: AssetType,
         rollback: bool,
-        response_chan: OneShotSender<Result<(), String>>,
+        response_chan: OneShotSender<MResult<()>>,
     },
     Tick(DateTime<Utc>, MPSCSender<PartySnapshot>),
 }
 
 #[async_trait]
 pub trait Processor {
-    async fn get_state(&self) -> Result<PartyState, String> {
+    async fn get_state(&self) -> MResult<PartyState> {
         let (tx, rx) = one_channel();
-        self.get_channel()
-            .send(PartyMessage::Snapshot(tx))
-            .await
-            .map_err(|v| format!("{:?}", v))?;
-        rx.await.map(|v| v.state).map_err(|v| format!("{:?}", v))
+        self.get_channel().send(PartyMessage::Snapshot(tx)).await?;
+        rx.await.map(|v| v.state).map_err(|e| e.into())
     }
 
-    async fn get_cash_balance(&self) -> Result<FixedNum, String> {
+    async fn get_cash_balance(&self) -> MResult<FixedNum> {
         self.get_state().await.map(|v| v.cash_balance)
     }
 
-    async fn get_asset(
-        &self,
-        asset_type: AssetTypeIdentifier,
-    ) -> Result<Option<AssetType>, String> {
+    async fn get_asset(&self, asset_type: AssetTypeIdentifier) -> MResult<Option<AssetType>> {
         self.get_state()
             .await
             .map(|v| v.assets.get(&asset_type).map(|v| v.clone()))
@@ -84,7 +79,7 @@ pub trait Processor {
         xa: &Arc<Transaction>,
         mine: &AssetType,
         theirs: &AssetType,
-    ) -> Result<(), String> {
+    ) -> MResult<()> {
         let (tx, rx) = one_channel();
         let msg = PartyMessage::Process {
             xa: xa.clone(),
@@ -93,12 +88,9 @@ pub trait Processor {
             rollback: false,
             response_chan: tx,
         };
-        Misc::fe(self.get_channel().send(msg).await)?;
+        self.get_channel().send(msg).await?;
 
-        match Misc::fe(rx.await) {
-            Ok(msg) => msg,
-            Err(st) => Err(st),
-        }
+        rx.await?
     }
 
     fn get_channel(&self) -> MPSCSender<PartyMessage>;
@@ -108,7 +100,7 @@ pub trait Processor {
         xa: &Arc<Transaction>,
         mine: &AssetType,
         theirs: &AssetType,
-    ) -> Result<(), String> {
+    ) -> MResult<()> {
         let (tx, rx) = one_channel();
         let msg = PartyMessage::Process {
             xa: xa.clone(),
@@ -117,12 +109,12 @@ pub trait Processor {
             rollback: true,
             response_chan: tx,
         };
-        Misc::fe(self.get_channel().send(msg).await)?;
+        self.get_channel().send(msg).await?;
 
-        let resp: Result<Result<(), String>, String> = Misc::fe(rx.await);
+        let resp = rx.await.map(|v| v.map_err(|e| e.into()));
         match resp {
             Ok(msg) => msg,
-            Err(st) => Err(st),
+            Err(st) => Err(st.into()),
         }
     }
 }
@@ -213,6 +205,28 @@ pub enum AssetType {
     Food(FixedNum),
     Materials(FixedNum), // Loans(HashMap<Uuid, Loan>),
 }
+
+impl AssetType {
+    pub fn labor<A: Into<FixedNum>>(v: A) -> AssetType {
+        AssetType::Labor(v.into())
+    }
+
+    pub fn usd<A: Into<FixedNum>>(v: A) -> AssetType {
+        AssetType::USD(v.into())
+    }
+
+    pub fn loan_balance<A: Into<FixedNum>>(v: A) -> AssetType {
+        AssetType::LoanBalance(v.into())
+    }
+
+    pub fn food<A: Into<FixedNum>>(v: A) -> AssetType {
+        AssetType::Food(v.into())
+    }
+    pub fn materials<A: Into<FixedNum>>(v: A) -> AssetType {
+        AssetType::Materials(v.into())
+    }
+}
+
 impl AssetType {
     pub fn to_identifier(&self) -> AssetTypeIdentifier {
         AssetTypeIdentifier::from_asset_type(self)
@@ -331,7 +345,7 @@ impl PartyState {
         xa: &Arc<Transaction>,
         mine: &AssetType,
         theirs: &AssetType,
-    ) -> Result<PartyState, String> {
+    ) -> MResult<PartyState> {
         self.process_or_rollback(xa, mine, theirs, false)
     }
 
@@ -340,7 +354,7 @@ impl PartyState {
         xa: &Arc<Transaction>,
         mine: &AssetType,
         theirs: &AssetType,
-    ) -> Result<PartyState, String> {
+    ) -> MResult<PartyState> {
         self.process_or_rollback(xa, mine, theirs, true)
     }
 
@@ -350,7 +364,7 @@ impl PartyState {
         mine: &AssetType,
         theirs: &AssetType,
         rollback: bool,
-    ) -> Result<PartyState, String> {
+    ) -> MResult<PartyState> {
         let new_xa = if rollback {
             let mut v2 = Vector::new();
             // remove the offending transaction
@@ -374,9 +388,9 @@ impl PartyState {
             match at {
                 AssetType::USD(amount) => {
                     if rollback {
-                        current - amount
+                        current - *amount
                     } else {
-                        current + amount
+                        current + *amount
                     }
                 }
                 _ => current,
@@ -391,7 +405,7 @@ impl PartyState {
             assets: &PartyAssets,
             at: &AssetType,
             rollback: bool,
-        ) -> Result<PartyAssets, String> {
+        ) -> MResult<PartyAssets> {
             let asset_type_id = at.to_identifier();
             match assets.get(&asset_type_id) {
                 Some(other_asset) => match other_asset.combine_with(at, rollback) {
@@ -399,7 +413,8 @@ impl PartyState {
                     _ => Err(format!(
                         "Unable to combine asset {:?} with new asset {:?}",
                         other_asset, at
-                    )),
+                    )
+                    .into()),
                 },
                 None if !rollback => Ok(assets.update(asset_type_id, at.clone())),
                 None => Ok(assets.update(asset_type_id, at.negative())),
@@ -487,11 +502,11 @@ impl Party {
                 match rx.recv().await {
                     None => break,
                     Some(PartyMessage::Snapshot(reply)) => {
-                        le(reply.send(build_snapshot(&snapshot, real_now)));
+                        log_error!(reply.send(build_snapshot(&snapshot, real_now)));
                     }
                     Some(PartyMessage::Tick(now, tx)) => {
                         real_now = now;
-                        le(tx.send(build_snapshot(&snapshot, real_now)).await);
+                        log_error!(tx.send(build_snapshot(&snapshot, real_now)).await);
                         // FIXME -- perform periodic events
                     }
                     Some(PartyMessage::Process {
@@ -507,11 +522,11 @@ impl Party {
                             snapshot.process(&xa, &mine, &theirs)
                         } {
                             Ok(new) => {
-                                le(response_chan.send(Ok(())));
+                                log_error!(response_chan.send(Ok(())));
                                 snapshot = new.clone();
                             }
                             Err(e) => {
-                                le(response_chan.send(Err(e)));
+                                log_error!(response_chan.send(Err(e)));
                             }
                         }
                     }
@@ -520,17 +535,17 @@ impl Party {
         });
     }
 
-    pub fn create_lua_runtime() -> Arc<Lua> {
+    pub fn create_lua_runtime() -> MResult<Arc<Lua>> {
         let lua = Lua::new();
-        let z: rlua::Result<()> = lua.context(|ctx| {
+        let v: MResult<()> = lua.context(|ctx| {
             ctx.load(r#"dofile("runtime_scripts/base.lua")"#).eval()?;
             ctx.load("we_own_your_basez()").eval()?;
             Ok(())
         });
-        le(z);
-        Arc::new(lua)
+        v?;
+        Ok(Arc::new(lua))
     }
-    pub async fn new(name: &str, party_type: PartyType, world: Arc<World>) -> Arc<Party> {
+    pub async fn new(name: &str, party_type: PartyType, world: Arc<World>) -> MResult<Arc<Party>> {
         let (tx, rx) = Party::create_channels();
         let ap = Arc::new(Party {
             id: Uuid::new_v4(),
@@ -539,10 +554,10 @@ impl Party {
             channel: tx,
         });
 
-        let arc_lua = Party::create_lua_runtime();
+        let arc_lua = Party::create_lua_runtime()?;
         Party::start_loop(world, ap.clone(), arc_lua, PartyState::new(), rx).await;
 
-        ap
+        Ok(ap)
     }
 
     pub async fn new_entity(
@@ -550,7 +565,7 @@ impl Party {
         baseline: &Vec<AssetType>,
         the_type: PartyType,
         world: Arc<World>,
-    ) -> Arc<Party> {
+    ) -> MResult<Arc<Party>> {
         let (tx, rx) = Party::create_channels();
         let ap = Arc::new(Party {
             id: Misc::compute_uuid_for(name),
@@ -562,15 +577,15 @@ impl Party {
         Party::start_loop(
             world,
             ap.clone(),
-            Party::create_lua_runtime(),
+            Party::create_lua_runtime()?,
             PartyState::new_with_baseline(baseline),
             rx,
         )
         .await;
 
-        ap
+        Ok(ap)
     }
-    pub async fn new_issuer(name: &str, world: Arc<World>) -> Arc<Party> {
+    pub async fn new_issuer(name: &str, world: Arc<World>) -> MResult<Arc<Party>> {
         let (tx, rx) = Party::create_channels();
         let ap = Arc::new(Party {
             id: Misc::compute_uuid_for(name),
@@ -582,13 +597,13 @@ impl Party {
         Party::start_loop(
             world,
             ap.clone(),
-            Party::create_lua_runtime(),
+            Party::create_lua_runtime()?,
             PartyState::new(),
             rx,
         )
         .await;
 
-        ap
+        Ok(ap)
     }
 }
 

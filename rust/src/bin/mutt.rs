@@ -87,7 +87,7 @@ pub async fn main() {
     let start_date = matches
         .value_of(start_time)
         .map(|v| DateTime::parse_from_rfc3339(v).unwrap().with_timezone(&Utc));
-    let w = World::new_with_preload(start_date, defaults).await;
+    let w = World::new_with_preload(start_date, defaults).await.unwrap();
 
     if matches.is_present(input_name) {
         let rr: Box<dyn BufRead> = match matches.value_of(input_name) as Option<&str> {
@@ -147,7 +147,10 @@ pub async fn process_json_stream<R: Read>(reader: R, world: &Arc<World>) -> Resu
         );
         let w2 = world.clone();
         to_wait.push(tokio::spawn(async move {
-            w2.process_transaction(&v).await.unwrap();
+            match w2.process_transaction(&v).await.as_ref() {
+                Ok(v) => v,
+                _ => panic!("Failed to process transactions"),
+            };
         }));
     }
 

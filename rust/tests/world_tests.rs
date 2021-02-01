@@ -28,12 +28,12 @@ use serde_json::{json, to_string_pretty};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_world_building() {
-    let w = World::new(None).await;
+    let w = World::new(None).await.unwrap();
     let ids = w.get_uuids();
     assert!(ids.len() > 0, "At least someone in the world");
 
     // construct a second world
-    let w2 = World::new(None).await;
+    let w2 = World::new(None).await.unwrap();
     let ids2 = w2.get_uuids();
     assert_eq!(ids, ids2, "The ids must be stable");
 
@@ -129,17 +129,19 @@ async fn test_a_transaction() {
     use mutt::party::AssetTypeIdentifier;
     use serde_json::{json, to_string_pretty};
 
-    let w = World::new_with_preload(None, World::get_test_party_stuff()).await;
+    let w: std::sync::Arc<World> = World::new_with_preload(None, World::get_test_party_stuff())
+        .await
+        .unwrap();
     let t = Transaction {
         description: "Government buys Labor".to_string(),
         from_party: *US_GOVERNMENT_UUID,
         to_party: *LABOR_UUID,
         id: None,
         when: None,
-        from: AssetType::USD(FixedNum::from(50)),
-        to: AssetType::Labor(FixedNum::from(2)),
+        from: AssetType::USD(50.into()),
+        to: AssetType::Labor(2.into()),
     };
-    w.process_transaction(&t).await.unwrap();
+    assert!(w.process_transaction(&t).await.is_ok());
     assert!(
         w.party_for(&LABOR_UUID)
             .unwrap()
@@ -155,7 +157,7 @@ async fn test_a_transaction() {
             .get_cash_balance()
             .await
             .unwrap()
-            < FixedNum::from(0),
+            < 0.into(),
         "Government has a deficit"
     );
 
@@ -198,7 +200,7 @@ async fn test_a_transaction() {
         to: AssetType::Food(FixedNum::from(3)),
     };
 
-    w.process_transaction(&t).await.unwrap();
+    assert!(w.process_transaction(&t).await.is_ok());
     assert_eq!(
         match w
             .party_for(&LABOR_UUID)
