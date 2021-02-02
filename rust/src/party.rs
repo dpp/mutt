@@ -21,6 +21,7 @@
 // SOFTWARE.
 
 use crate::log_error;
+use crate::lua_env::create_lua_runtime;
 use crate::misc::{FixedNum, MResult, Misc};
 use crate::transaction::Transaction;
 use crate::world::World;
@@ -28,7 +29,7 @@ use crate::world::World;
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use derivative::Derivative;
-use im::{HashMap, Vector};
+use im::{hashmap, HashMap, Vector};
 use rlua::Lua;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -175,7 +176,7 @@ impl core::fmt::Display for PartyMessage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PartyType {
     CurrencyIssuer = 1,
     CurrencyUser = 2,
@@ -535,16 +536,6 @@ impl Party {
         });
     }
 
-    pub fn create_lua_runtime() -> MResult<Arc<Lua>> {
-        let lua = Lua::new();
-        let v: MResult<()> = lua.context(|ctx| {
-            ctx.load(r#"dofile("runtime_scripts/base.lua")"#).eval()?;
-            ctx.load("we_own_your_basez()").eval()?;
-            Ok(())
-        });
-        v?;
-        Ok(Arc::new(lua))
-    }
     pub async fn new(name: &str, party_type: PartyType, world: Arc<World>) -> MResult<Arc<Party>> {
         let (tx, rx) = Party::create_channels();
         let ap = Arc::new(Party {
@@ -554,7 +545,11 @@ impl Party {
             channel: tx,
         });
 
-        let arc_lua = Party::create_lua_runtime()?;
+        let arc_lua = create_lua_runtime(Some(
+            hashmap! {"party_type".into() => serde_json::to_string(&party_type)?,
+                "party_id".into() => serde_json::to_string(&ap.id)?,
+            "name".into() => name.into()},
+        ))?;
         Party::start_loop(world, ap.clone(), arc_lua, PartyState::new(), rx).await;
 
         Ok(ap)
@@ -577,7 +572,11 @@ impl Party {
         Party::start_loop(
             world,
             ap.clone(),
-            Party::create_lua_runtime()?,
+            create_lua_runtime(Some(
+                hashmap! {"party_type".into() => serde_json::to_string(&the_type)?,
+                    "party_id".into() => serde_json::to_string(&ap.id)?,
+                "name".into() => name.into()},
+            ))?,
             PartyState::new_with_baseline(baseline),
             rx,
         )
@@ -597,7 +596,11 @@ impl Party {
         Party::start_loop(
             world,
             ap.clone(),
-            Party::create_lua_runtime()?,
+            create_lua_runtime(Some(
+                hashmap! {"party_type".into() => serde_json::to_string(&PartyType::CurrencyIssuer)?,
+                    "party_id".into() => serde_json::to_string(&ap.id)?,
+                "name".into() => name.into()},
+            ))?,
             PartyState::new(),
             rx,
         )

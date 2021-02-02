@@ -60,6 +60,12 @@ impl From<RecvError> for Box<dyn GenericError> {
     }
 }
 
+impl From<serde_json::Error> for Box<dyn GenericError> {
+    fn from(x: serde_json::Error) -> Self {
+        Box::new(ErrorWrapper { v: x })
+    }
+}
+
 impl From<String> for Box<dyn GenericError> {
     fn from(x: String) -> Self {
         // let _z: ErrorWrapper<dyn Error + Sync + Send> = ErrorWrapper {
