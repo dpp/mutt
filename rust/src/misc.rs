@@ -169,11 +169,11 @@ impl Misc {
 #[macro_export]
 macro_rules! log_error {
     ( $input:expr ) => {
-        use log::error;
+        // use log::error;
         match $input {
             Ok(v) => Some(v),
             Err(e) => {
-                error!("file: {} line: {} error: {:?}", file!(), line!(), e);
+                log::error!("file: {} line: {} error: {:?}", file!(), line!(), e);
                 None
             }
         }

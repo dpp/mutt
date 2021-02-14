@@ -53,7 +53,7 @@ fn test_preload_json() {
     "Labor",
     [
       {
-        "Labor": "1000"
+        "Labor": ["1000", "Work"]
       }
     ]
   ],
@@ -67,7 +67,7 @@ fn test_preload_json() {
     "CurrencyUser",
     [
       {
-        "Materials": "10000"
+        "Materials": ["10000", "Misc"]
       }
     ]
   ],
@@ -138,8 +138,8 @@ async fn test_a_transaction() {
         to_party: *LABOR_UUID,
         id: None,
         when: None,
-        from: AssetType::USD(50.into()),
-        to: AssetType::Labor(2.into()),
+        from: AssetType::usd(50),
+        to: AssetType::labor(2, "Work"),
     };
     assert!(w.process_transaction(&t).await.is_ok());
     assert!(
@@ -165,12 +165,12 @@ async fn test_a_transaction() {
         match w
             .party_for(&US_GOVERNMENT_UUID)
             .unwrap()
-            .get_asset(AssetTypeIdentifier::Labor)
+            .get_asset(AssetTypeIdentifier::Labor("Work".into()))
             .await
             .unwrap()
             .unwrap()
         {
-            AssetType::Labor(x) => x,
+            AssetType::Labor(x, _) => x,
             _ => panic!("Expected labor"),
         } > FixedNum::from(0),
         "Government has labor"
@@ -179,12 +179,12 @@ async fn test_a_transaction() {
         match w
             .party_for(&LABOR_UUID)
             .unwrap()
-            .get_asset(AssetTypeIdentifier::Labor)
+            .get_asset(AssetTypeIdentifier::Labor("Work".into()))
             .await
             .unwrap() // Unwrap the result
             .unwrap() // unwrap the option
         {
-            AssetType::Labor(x) => x,
+            AssetType::Labor(x, _) => x,
             _ => panic!("Expected labor"),
         },
         FixedNum::from(998),

@@ -23,10 +23,12 @@
 use crate::log_error;
 use crate::misc::{MResult, Misc};
 use crate::party::{AssetType, Party, PartyMessage, PartyProxy, PartyType};
+use crate::party_func::RefreshLabor;
 use crate::transaction::Transaction;
 use arc_swap::ArcSwap;
 use chrono::{DateTime, Utc};
-use im::{HashMap, HashSet};
+use im::{HashMap, HashSet, Vector};
+use std::ops::Deref;
 use std::sync::Arc;
 use tokio::sync::mpsc::channel as mpsc_channel;
 use uuid::Uuid;
@@ -53,10 +55,11 @@ fn uuids_are_stable() {
 
 #[derive(Debug)]
 pub struct World {
-    parties: ArcSwap<HashMap<Uuid, PartyProxy>>,
+    parties: ArcSwap<HashMap<Uuid, Arc<PartyProxy>>>,
     transactions: ArcSwap<HashMap<Uuid, Arc<Transaction>>>,
     failed_transactions: ArcSwap<HashMap<Uuid, (Arc<MResult<()>>, Arc<Transaction>)>>,
     time: ArcSwap<DateTime<Utc>>,
+    labor_fairies: ArcSwap<Option<Vector<Arc<PartyProxy>>>>,
 }
 impl World {
     pub async fn new(start: Option<DateTime<Utc>>) -> MResult<Arc<World>> {
@@ -65,10 +68,17 @@ impl World {
             transactions: ArcSwap::new(Arc::new(HashMap::new())),
             failed_transactions: ArcSwap::new(Arc::new(HashMap::new())),
             time: ArcSwap::new(Arc::new(start.unwrap_or(Utc::now()))),
+            labor_fairies: ArcSwap::new(Arc::new(None)),
         });
         ret.add_party(&Party::new_issuer(US_GOVERNMENT_NAME, ret.clone()).await?);
         ret.add_party(
-            &Party::new_entity(MAGIC_LABOR_NAME, &vec![], PartyType::Fairy, ret.clone()).await?,
+            &Party::new_entity(
+                MAGIC_LABOR_NAME,
+                &vec![],
+                PartyType::LaborFairy,
+                ret.clone(),
+            )
+            .await?,
         );
 
         let wc = ret.clone();
@@ -77,6 +87,24 @@ impl World {
         });
 
         Ok(ret)
+    }
+
+    pub fn get_labor_fairy(&self) -> Vector<Arc<PartyProxy>> {
+        match self.labor_fairies.load().deref().deref() {
+            Some(info) => info.clone(),
+            None => {
+                let pv: Vector<Arc<PartyProxy>> = self
+                    .parties
+                    .load()
+                    .values()
+                    .filter(|p| p.party_type == PartyType::LaborFairy)
+                    .map(|p| p.clone())
+                    .collect();
+                let ret = pv.clone();
+                self.labor_fairies.store(Arc::new(Some(pv)));
+                ret
+            }
+        }
     }
 
     pub fn get_time(&self) -> DateTime<Utc> {
@@ -104,17 +132,17 @@ impl World {
                 let mut remaining = cnt;
                 while remaining > 0 {
                     // receive all the states
-                    rx.recv().await; // FIXME do something with the s/napshots
+                    rx.recv().await; // FIXME do something with the snapshots
                     remaining -= 1;
                 }
             });
 
             for p in parties.values() {
-                log_error!(
-                    p.channel
-                        .send(PartyMessage::Tick(next_time, tx.clone()))
-                        .await
-                );
+                let p2 = p.clone();
+                let t2 = tx.clone();
+                tokio::spawn(async move {
+                    log_error!(p2.channel.send(PartyMessage::Tick(next_time, t2)).await);
+                });
             }
         }
     }
@@ -166,14 +194,14 @@ impl World {
         ret.push((
             LABOR_NAME.to_string(),
             PartyType::Labor,
-            vec![AssetType::labor(1000)],
+            vec![AssetType::labor(1000, "Work")],
         ));
 
         ret.push((BANK_NAME.to_string(), PartyType::CurrencyUser, vec![]));
         ret.push((
             RAW_MATERIALS_NAME.to_string(),
             PartyType::CurrencyUser,
-            vec![AssetType::materials(10000)],
+            vec![AssetType::materials(10000, "Misc")],
         ));
         ret.push((
             FOOD_PRODUCER_NAME.to_string(),
@@ -233,7 +261,7 @@ impl World {
     }
 
     pub fn get_uuids(&self) -> HashSet<Uuid> {
-        let the_map: &HashMap<Uuid, PartyProxy> = &self.parties.load();
+        let the_map: &HashMap<Uuid, Arc<PartyProxy>> = &self.parties.load();
         let mut ret = HashSet::new();
         for v in the_map.keys() {
             ret = ret.update(*v);
@@ -241,11 +269,12 @@ impl World {
         ret
     }
 
-    pub fn party_for(&self, id: &Uuid) -> Option<PartyProxy> {
+    pub fn party_for(&self, id: &Uuid) -> Option<Arc<PartyProxy>> {
         self.parties.load().get(id).map(|v| v.clone())
     }
 
     pub fn add_party(&self, p: &Arc<Party>) {
+        self.labor_fairies.store(Arc::new(None)); // clear labor fairy cache
         self.parties.rcu(|pts| {
             if pts.contains_key(&p.id) {
                 // do nothing
@@ -254,12 +283,18 @@ impl World {
                 let chan = p.get_message_chan();
                 Arc::new(pts.update(
                     p.id.clone(),
-                    PartyProxy {
+                    Arc::new(PartyProxy {
+                        name: p.name.clone(),
+                        party_type: p.party_type,
                         id: p.id.clone(),
                         channel: chan,
-                    },
+                    }),
                 ))
             }
         });
+
+        if p.party_type == PartyType::Labor {
+            p.add_tick_func(Arc::new(RefreshLabor {}))
+        }
     }
 }

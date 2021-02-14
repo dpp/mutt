@@ -40,6 +40,23 @@ pub struct Transaction {
 }
 
 impl Transaction {
+    pub fn new(
+        description: &str,
+        from: AssetType,
+        to: AssetType,
+        from_party: Uuid,
+        to_party: Uuid,
+    ) -> Transaction {
+        Transaction {
+            id: Some(Uuid::new_v4()),
+            description: description.into(),
+            from: from,
+            to: to,
+            when: None,
+            from_party: from_party,
+            to_party: to_party,
+        }
+    }
     /// If date and/or id is missing insert them
     pub fn fix_date_and_id(&self, now: &DateTime<Utc>) -> Transaction {
         Transaction {
